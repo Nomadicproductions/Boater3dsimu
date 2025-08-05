@@ -84,7 +84,7 @@ const controls = {
 let boatVelocity = new THREE.Vector2(0, 0);
 
 function updateBoatMovement() {
-  const speed = 0.0009;      // Slower
+  const speed = 0.0017;      // Slower
   const turnSpeed = 0.007; // Slower
   let forward = 0;
   if (controls.forward) forward += speed;
