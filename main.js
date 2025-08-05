@@ -64,7 +64,7 @@ let current = new THREE.Vector2(0, 0);
 let targetCurrent = new THREE.Vector2(0, 0);
 let currentChangeTimer = 0;
 const CURRENT_UPDATE_INTERVAL = 3500; // ms
-const CURRENT_MAX_STRENGTH = 0.008; // much gentler for realism
+const CURRENT_MAX_STRENGTH = 0.002; // much gentler for realism
 
 function randomizeTargetCurrent() {
   const angle = Math.random() * 2 * Math.PI;
