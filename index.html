@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Boat Simulation Starter - Touch Controls</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    .btn {
+      background: rgba(255,255,255,0.8);
+      border: none;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      font-size: 24px;
+      text-align: center;
+      line-height: 60px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button class="btn" id="left">⟵</button>
+    <button class="btn" id="up">↑</button>
+    <button class="btn" id="down">↓</button>
+    <button class="btn" id="right">⟶</button>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
