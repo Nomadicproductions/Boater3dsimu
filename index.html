@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Boat Simulation</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 20px;
+      z-index: 1;
+    }
+
+    .btn {
+      background: rgba(255, 255, 255, 0.7);
+      padding: 20px;
+      font-size: 24px;
+      border-radius: 10px;
+      user-select: none;
+    }
+
+    .btn:active {
+      background: rgba(200, 200, 255, 0.9);
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <div class="btn" id="left">⟵</div>
+    <div class="btn" id="forward">↑</div>
+    <div class="btn" id="backward">↓</div>
+    <div class="btn" id="right">⟶</div>
+  </div>
+
+  <!-- Only load your ES module main.js! -->
+  <script type="module" src="main.js"></script>
+</body>
+</html>
