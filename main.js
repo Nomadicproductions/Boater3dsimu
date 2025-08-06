@@ -18,12 +18,10 @@ light.position.set(5, 10, 7.5);
 scene.add(light);
 
 // --- GRID HELPER & WATER PLANE ---
-// Grid
 const grid = new THREE.GridHelper(100, 100, 0x555555, 0xaaaaaa);
 grid.position.y = 0.01; // Ensure above water for visibility
 scene.add(grid);
 
-// Water
 const waterGeometry = new THREE.PlaneGeometry(500, 500, 100, 100);
 const waterMaterial = new THREE.MeshStandardMaterial({
   color: 0x1e90ff,
@@ -43,7 +41,7 @@ const boat = new THREE.Mesh(boatGeometry, boatMaterial);
 boat.position.y = 0.27; // Just above water
 scene.add(boat);
 
-// --- DYNAMIC WAVES ---
+// --- DYNAMIC WAVES (BASE RIPPLE) ---
 function animateWater(time) {
   const verts = water.geometry.attributes.position;
   for (let i = 0; i < verts.count; i++) {
@@ -59,21 +57,178 @@ function animateWater(time) {
   water.geometry.computeVertexNormals();
 }
 
-// --- DYNAMIC WATER CURRENT (TUNED FOR REALISM) ---
-let current = new THREE.Vector2(0, 0);
-let targetCurrent = new THREE.Vector2(0, 0);
-let currentChangeTimer = 0;
-const CURRENT_UPDATE_INTERVAL = 3500; // ms
-const CURRENT_MAX_STRENGTH = 0.002; // much gentler for realism
+// --- SWELL/BREAKING WAVE SYSTEM ---
 
-function randomizeTargetCurrent() {
-  const angle = Math.random() * 2 * Math.PI;
-  const strength = Math.random() * CURRENT_MAX_STRENGTH * 0.8 + CURRENT_MAX_STRENGTH * 0.2;
-  targetCurrent.set(Math.cos(angle) * strength, Math.sin(angle) * strength);
+// Coordinate system: X (left-right), Z (forward-backward)
+// All wave overlays are drawn in 2D on #wave-overlay, mapped from 3D world to 2D screen
+
+const waveOverlay = document.getElementById('wave-overlay');
+function resizeWaveOverlay() {
+  waveOverlay.width = window.innerWidth;
+  waveOverlay.height = window.innerHeight;
 }
-randomizeTargetCurrent();
+resizeWaveOverlay();
+window.addEventListener('resize', resizeWaveOverlay);
 
-// --- MOVEMENT ---
+// Utility: project 3D world coords to 2D screen
+function worldToScreen(pos) {
+  const vector = pos.clone().project(camera);
+  return {
+    x: (vector.x + 1) / 2 * waveOverlay.width,
+    y: (-vector.y + 1) / 2 * waveOverlay.height,
+  };
+}
+
+// Swell/wave set parameters
+const SWELL_SPAWN_INTERVAL = 4500; // ms
+const SWELL_SPAWN_RADIUS = 180; // how far from center
+const SWELL_MIN_SET = 3;
+const SWELL_MAX_SET = 5;
+const SWELL_MIN_LENGTH = 10;
+const SWELL_MAX_LENGTH = 30;
+const SWELL_MIN_WIDTH = 18;
+const SWELL_MAX_WIDTH = 28;
+const SWELL_MIN_DURATION = 5000;
+const SWELL_MAX_DURATION = 9000;
+const SWELL_BARREL_SPEED = 0.06; // units per frame (relative to world units)
+
+let swells = [];  // Active swells
+
+function spawnSwellSet() {
+  const setCount = Math.floor(Math.random() * (SWELL_MAX_SET - SWELL_MIN_SET + 1)) + SWELL_MIN_SET;
+  let baseCenter = new THREE.Vector3(
+    (Math.random() - 0.5) * SWELL_SPAWN_RADIUS,
+    0,
+    (Math.random() - 0.5) * SWELL_SPAWN_RADIUS
+  );
+  let setAngle = Math.random() * 2 * Math.PI;
+  let dir = new THREE.Vector2(Math.cos(setAngle), Math.sin(setAngle));
+  let spacing = SWELL_MAX_WIDTH * 1.2;
+
+  for (let i = 0; i < setCount; i++) {
+    // Each swell is offset along the direction
+    let center = baseCenter.clone().add(new THREE.Vector3(dir.x * i * spacing, 0, dir.y * i * spacing));
+    let width = Math.random() * (SWELL_MAX_WIDTH - SWELL_MIN_WIDTH) + SWELL_MIN_WIDTH;
+    let length = Math.random() * (SWELL_MAX_LENGTH - SWELL_MIN_LENGTH) + SWELL_MIN_LENGTH;
+    let duration = Math.random() * (SWELL_MAX_DURATION - SWELL_MIN_DURATION) + SWELL_MIN_DURATION;
+    let barrelDir = Math.random() < 0.5 ? -1 : 1; // barrel travels left or right
+    let willBreak = Math.random() < 0.8; // 80% will break/whitewash, others fade out
+
+    swells.push({
+      center,
+      width,
+      length,
+      duration,
+      time: 0,
+      phase: 'growing', // growing, steady, shrinking, done
+      barrelProgress: 0,
+      barrelDir,
+      willBreak,
+      breakLength: 0,
+      barrelAt: 0, // 0..1 along width
+      fade: 0,
+    });
+  }
+}
+
+let timeSinceLastSwell = 0;
+
+// --- ANIMATE SWELLS ---
+function updateSwells(dt) {
+  for (let swell of swells) {
+    swell.time += dt;
+    // Animation phases
+    let growT = Math.min(1, swell.time / (swell.duration * 0.2));
+    let shrinkT = Math.max(0, (swell.time - swell.duration * 0.7) / (swell.duration * 0.3));
+    if (swell.phase === 'growing') {
+      swell.breakLength = growT * swell.length;
+      if (growT >= 1) swell.phase = 'steady';
+    } else if (swell.phase === 'steady') {
+      swell.breakLength = swell.length;
+      if (swell.time > swell.duration * 0.7) swell.phase = 'shrinking';
+    } else if (swell.phase === 'shrinking') {
+      swell.breakLength = (1 - shrinkT) * swell.length;
+      if (shrinkT >= 1) swell.phase = 'done';
+    }
+    // Barrel travels along width during lifetime, leaving whitewash behind
+    if (swell.phase !== 'done') {
+      let barrelSpeed = SWELL_BARREL_SPEED * swell.barrelDir;
+      let t = swell.time / swell.duration;
+      swell.barrelAt = Math.max(0, Math.min(1, 0.1 + t * 0.8));
+    }
+  }
+  // Remove finished swells
+  swells = swells.filter(swell => swell.phase !== 'done');
+}
+
+// --- DRAW SWELLS/BREAKING WAVES (2D Overlay) ---
+function drawSwells() {
+  const ctx = waveOverlay.getContext('2d');
+  ctx.clearRect(0, 0, waveOverlay.width, waveOverlay.height);
+
+  for (let swell of swells) {
+    // Project center to screen
+    let center2d = worldToScreen(swell.center);
+
+    // Draw white wash/broken wave as a translucent rectangle
+    if (swell.phase !== 'done' && swell.willBreak) {
+      let barrelPos = (swell.barrelAt - 0.5) * swell.width;
+      let length = swell.breakLength;
+      let left = -swell.width / 2;
+      let right = swell.width / 2;
+      let barrelX = barrelPos;
+
+      // Rectangle area: grows from barrel origin, then shrinks
+      ctx.save();
+      ctx.translate(center2d.x, center2d.y);
+      ctx.rotate(0); // Could add orientation if desired
+
+      // White foam (broken wave)
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = '#eaf7ff';
+      ctx.fillRect(
+        left,
+        -length / 2,
+        right - left,
+        length
+      );
+      // Barrel highlight
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = '#b4e1ff';
+      ctx.fillRect(
+        barrelX - 8,
+        -length / 2,
+        16,
+        length
+      );
+      ctx.restore();
+    }
+
+    // Draw main swell as subtle blue ellipse (not breaking)
+    if (!swell.willBreak) {
+      ctx.save();
+      ctx.translate(center2d.x, center2d.y);
+      ctx.globalAlpha = 0.2 + 0.3 * (1 - Math.abs(0.5 - swell.barrelAt));
+      ctx.strokeStyle = '#aef';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, swell.width / 2, swell.length / 2, 0, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// --- SWELL SPAWNER TIMER ---
+function updateSwellSpawner(dt) {
+  timeSinceLastSwell += dt;
+  if (timeSinceLastSwell > SWELL_SPAWN_INTERVAL) {
+    spawnSwellSet();
+    timeSinceLastSwell = 0;
+  }
+}
+
+// --- MOVEMENT (AS BEFORE) ---
 const controls = {
   forward: false,
   backward: false,
@@ -84,8 +239,8 @@ const controls = {
 let boatVelocity = new THREE.Vector2(0, 0);
 
 function updateBoatMovement() {
-  const speed = 0.009;      // Slower
-  const turnSpeed = 0.007; // Slower
+  const speed = 0.009;
+  const turnSpeed = 0.007;
   let forward = 0;
   if (controls.forward) forward += speed;
   if (controls.backward) forward -= speed * 0.7;
@@ -96,9 +251,6 @@ function updateBoatMovement() {
   // Boat moves in facing direction
   const dir = new THREE.Vector2(-Math.sin(boat.rotation.y), -Math.cos(boat.rotation.y));
   boatVelocity.addScaledVector(dir, forward);
-
-  // Apply water current (visible drift)
-  boatVelocity.add(current);
 
   // Friction
   boatVelocity.multiplyScalar(0.94);
@@ -134,87 +286,22 @@ function updateCamera() {
   camera.lookAt(boat.position);
 }
 
-// --- ON-SCREEN CURRENT INDICATOR ---
-function drawCurrentArrow() {
-  let overlay = document.getElementById('current-arrow-overlay');
-  if (!overlay) {
-    overlay = document.createElement('canvas');
-    overlay.id = 'current-arrow-overlay';
-    overlay.style.position = 'absolute';
-    overlay.style.left = '0';
-    overlay.style.top = '0';
-    overlay.style.pointerEvents = 'none';
-    overlay.width = window.innerWidth;
-    overlay.height = window.innerHeight;
-    overlay.style.zIndex = 2;
-    document.body.appendChild(overlay);
-  }
-  const ctx = overlay.getContext('2d');
-  ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-  // Draw arrow in upper right
-  const cx = overlay.width - 60;
-  const cy = 60;
-  const arrowLength = 40;
-  const strength = current.length();
-  const angle = Math.atan2(current.x, current.y);
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(-angle); // Y forward is up
-
-  ctx.lineWidth = 5;
-  ctx.strokeStyle = `rgba(30,144,255,${0.5 + 0.5 * (strength / CURRENT_MAX_STRENGTH)})`;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, -arrowLength);
-  ctx.stroke();
-
-  // Arrowhead
-  ctx.beginPath();
-  ctx.moveTo(-8, -arrowLength + 15);
-  ctx.lineTo(0, -arrowLength);
-  ctx.lineTo(8, -arrowLength + 15);
-  ctx.stroke();
-
-  // Text
-  ctx.font = "16px sans-serif";
-  ctx.fillStyle = "#1e90ff";
-  ctx.fillText("Current", -30, 40);
-
-  ctx.restore();
-}
-
-// --- RESIZE HANDLER ---
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  let overlay = document.getElementById('current-arrow-overlay');
-  if (overlay) {
-    overlay.width = window.innerWidth;
-    overlay.height = window.innerHeight;
-  }
-});
-
 // --- ANIMATION LOOP ---
-function animate(time) {
+let lastTime = performance.now();
+function animate(now = performance.now()) {
   requestAnimationFrame(animate);
-  animateWater(time);
+  let dt = now - lastTime;
+  lastTime = now;
 
-  // Smoothly update current toward target
-  current.lerp(targetCurrent, 0.01);
+  animateWater(now);
 
-  // Change target every interval
-  currentChangeTimer += (1 / 60) * 1000;
-  if (currentChangeTimer > CURRENT_UPDATE_INTERVAL) {
-    randomizeTargetCurrent();
-    currentChangeTimer = 0;
-  }
+  // Swell system
+  updateSwellSpawner(dt);
+  updateSwells(dt);
+  drawSwells();
 
   updateBoatMovement();
   updateCamera();
-  drawCurrentArrow();
 
   renderer.render(scene, camera);
 }
